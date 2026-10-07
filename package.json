@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:sync": "esbuild scripts/smoke.ts scripts/smoke-migration.ts --bundle --platform=node --format=esm --outdir=node_modules/.tmp --log-level=warning && node node_modules/.tmp/smoke.js && node node_modules/.tmp/smoke-migration.js"
   },
   "dependencies": {
     "@emotion/react": "^11.14.0",
@@ -26,6 +27,7 @@
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
     "@vitejs/plugin-react": "^4.3.4",
+    "esbuild": "^0.28.2",
     "typescript": "^5.7.2",
     "vite": "^6.0.7"
   }

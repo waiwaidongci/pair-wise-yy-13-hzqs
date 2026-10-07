@@ -13,15 +13,23 @@ import {
 } from "@mui/material";
 import {
   AddCommentRounded,
+  CallSplitRounded,
   CheckCircleRounded,
   DeleteOutlineRounded,
   ForumRounded,
   ReplayRounded,
   ReplyRounded,
   SubdirectoryArrowRightRounded,
+  WrongLocationRounded,
 } from "@mui/icons-material";
 import type { CommentDraft, CommentSide } from "../types/review";
-import { commentSideLabel, commentsForFile, useReviewStore } from "../stores/reviewStore";
+import { commentSideLabel, commentsForFile, openConflictsOf, useReviewStore, useViewDoc } from "../stores/reviewStore";
+
+function shortBatch(batchId: string): string {
+  if (batchId.startsWith("batch-legacy")) return "迁移批次";
+  if (batchId.startsWith("batch-seed")) return "种子批次";
+  return batchId.length > 16 ? `…${batchId.slice(-8)}` : batchId;
+}
 
 export default function CommentPanel({
   draft,
@@ -34,24 +42,27 @@ export default function CommentPanel({
   onReveal: (side: CommentSide, line: number) => void;
   onCreateCurrent: () => void;
 }) {
+  const doc = useViewDoc();
   const selectedFileId = useReviewStore((state) => state.selectedFileId);
-  const files = useReviewStore((state) => state.files);
-  const comments = useReviewStore((state) => state.comments);
   const addComment = useReviewStore((state) => state.addComment);
   const addReply = useReviewStore((state) => state.addReply);
   const resolveComment = useReviewStore((state) => state.resolveComment);
   const deleteComment = useReviewStore((state) => state.deleteComment);
   const [draftBody, setDraftBody] = useState("");
   const [replyDrafts, setReplyDrafts] = useState<Record<string, string>>({});
-  const selectedFile = files.find((file) => file.id === selectedFileId)!;
-  const currentComments = commentsForFile(comments, selectedFileId);
+  const selectedFile = doc.files.find((file) => file.id === selectedFileId) ?? doc.files[0];
+  const currentComments = commentsForFile(doc.comments, selectedFile?.id ?? "");
   const unresolved = currentComments.filter((comment) => !comment.resolved).length;
+  const fileConflicts = selectedFile ? openConflictsOf(doc, selectedFile.id) : [];
+  const conflictCommentIds = new Set(fileConflicts.filter((conflict) => conflict.entity === "comment").map((conflict) => conflict.entityId));
 
   const submitDraft = () => {
     if (!draft || !draftBody.trim()) return;
     addComment(draft, draftBody);
     setDraftBody("");
   };
+
+  if (!selectedFile) return null;
 
   return (
     <Paper variant="outlined" sx={{ minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
@@ -62,6 +73,9 @@ export default function CommentPanel({
             <Typography sx={{ fontSize: 13, fontWeight: 950 }}>审阅线程</Typography>
             <Typography noWrap sx={{ fontSize: 10, color: "text.secondary", mt: 0.25 }}>{selectedFile.path}</Typography>
           </Box>
+          {fileConflicts.length > 0 && (
+            <Chip size="small" color="warning" icon={<CallSplitRounded />} label={`${fileConflicts.length} 冲突`} />
+          )}
           <Chip size="small" color={unresolved ? "warning" : "success"} label={`${unresolved} 未解决`} />
         </Stack>
         <Button fullWidth size="small" variant="outlined" startIcon={<AddCommentRounded />} onClick={onCreateCurrent} sx={{ mt: 1.1 }}>
@@ -102,76 +116,90 @@ export default function CommentPanel({
           </Box>
         )}
         <Stack spacing={1}>
-          {currentComments.map((comment) => (
-            <Paper
-              key={comment.id}
-              variant="outlined"
-              sx={{
-                p: 1.1,
-                borderColor: comment.resolved ? "success.light" : "divider",
-                bgcolor: comment.resolved ? "success.50" : "background.paper",
-              }}
-            >
-              <Stack direction="row" alignItems="center" spacing={0.7}>
-                <Chip
-                  size="small"
-                  label={`${commentSideLabel(comment.side)} ${comment.line}`}
-                  onClick={() => onReveal(comment.side, comment.line)}
-                  sx={{ cursor: "pointer", fontFamily: "monospace" }}
-                />
-                <Typography sx={{ fontSize: 10.5, fontWeight: 850, flex: 1 }}>{comment.author}</Typography>
-                <Tooltip title={comment.resolved ? "重新打开" : "标记已解决"}>
-                  <IconButton size="small" color={comment.resolved ? "primary" : "success"} onClick={() => resolveComment(comment.id, !comment.resolved)}>
-                    {comment.resolved ? <ReplayRounded fontSize="small" /> : <CheckCircleRounded fontSize="small" />}
-                  </IconButton>
-                </Tooltip>
-                <Tooltip title="删除评论">
-                  <IconButton size="small" color="error" onClick={() => deleteComment(comment.id)}>
-                    <DeleteOutlineRounded fontSize="small" />
-                  </IconButton>
-                </Tooltip>
-              </Stack>
-              <Typography sx={{ mt: 0.8, fontSize: 11.2, lineHeight: 1.6 }}>{comment.body}</Typography>
-              <Typography sx={{ mt: 0.5, fontSize: 9.5, color: "text.secondary" }}>
-                {new Date(comment.createdAt).toLocaleString("zh-CN", { hour12: false })}
-              </Typography>
+          {currentComments.map((comment) => {
+            const conflicted = conflictCommentIds.has(comment.id);
+            return (
+              <Paper
+                key={comment.id}
+                variant="outlined"
+                sx={{
+                  p: 1.1,
+                  borderColor: conflicted ? "warning.main" : comment.resolved ? "success.light" : "divider",
+                  bgcolor: comment.resolved ? "success.50" : "background.paper",
+                }}
+              >
+                <Stack direction="row" alignItems="center" spacing={0.7}>
+                  {comment.orphaned ? (
+                    <Tooltip title="变更集更新后找不到原位置，需要重新放置">
+                      <Chip size="small" color="error" variant="outlined" icon={<WrongLocationRounded />} label="定位失效" sx={{ fontFamily: "monospace" }} />
+                    </Tooltip>
+                  ) : (
+                    <Chip
+                      size="small"
+                      label={`${commentSideLabel(comment.side)} ${comment.line}`}
+                      onClick={() => onReveal(comment.side, comment.line)}
+                      sx={{ cursor: "pointer", fontFamily: "monospace" }}
+                    />
+                  )}
+                  <Typography sx={{ fontSize: 10.5, fontWeight: 850, flex: 1 }}>{comment.author}</Typography>
+                  {conflicted && (
+                    <Tooltip title="该评论存在合并冲突，等待裁决">
+                      <CallSplitRounded sx={{ fontSize: 16 }} color="warning" />
+                    </Tooltip>
+                  )}
+                  <Tooltip title={comment.resolved ? "重新打开" : "标记已解决"}>
+                    <IconButton size="small" color={comment.resolved ? "primary" : "success"} onClick={() => resolveComment(comment.id, !comment.resolved)}>
+                      {comment.resolved ? <ReplayRounded fontSize="small" /> : <CheckCircleRounded fontSize="small" />}
+                    </IconButton>
+                  </Tooltip>
+                  <Tooltip title="删除评论">
+                    <IconButton size="small" color="error" onClick={() => deleteComment(comment.id)}>
+                      <DeleteOutlineRounded fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
+                </Stack>
+                <Typography sx={{ mt: 0.8, fontSize: 11.2, lineHeight: 1.6 }}>{comment.body}</Typography>
+                <Typography sx={{ mt: 0.5, fontSize: 9.5, color: "text.secondary" }}>
+                  {new Date(comment.createdAt).toLocaleString("zh-CN", { hour12: false })} · 批次 {shortBatch(comment.batchId)}
+                </Typography>
 
-              {comment.replies.map((reply) => (
-                <Box key={reply.id} sx={{ mt: 1, ml: 1.2, pl: 1.2, borderLeft: "2px solid", borderColor: "divider" }}>
-                  <Stack direction="row" alignItems="center" spacing={0.5}>
-                    <SubdirectoryArrowRightRounded sx={{ fontSize: 14, color: "text.secondary" }} />
-                    <Typography sx={{ fontSize: 10.5, fontWeight: 850 }}>{reply.author}</Typography>
-                    <Typography sx={{ fontSize: 9, color: "text.secondary", ml: "auto" }}>
-                      {new Date(reply.createdAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}
-                    </Typography>
-                  </Stack>
-                  <Typography sx={{ mt: 0.45, fontSize: 10.8, color: "text.secondary", lineHeight: 1.55 }}>{reply.body}</Typography>
-                </Box>
-              ))}
+                {comment.replies.map((reply) => (
+                  <Box key={reply.id} sx={{ mt: 1, ml: 1.2, pl: 1.2, borderLeft: "2px solid", borderColor: "divider" }}>
+                    <Stack direction="row" alignItems="center" spacing={0.5}>
+                      <SubdirectoryArrowRightRounded sx={{ fontSize: 14, color: "text.secondary" }} />
+                      <Typography sx={{ fontSize: 10.5, fontWeight: 850 }}>{reply.author}</Typography>
+                      <Typography sx={{ fontSize: 9, color: "text.secondary", ml: "auto" }}>
+                        {new Date(reply.createdAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}
+                      </Typography>
+                    </Stack>
+                    <Typography sx={{ mt: 0.45, fontSize: 10.8, color: "text.secondary", lineHeight: 1.55 }}>{reply.body}</Typography>
+                  </Box>
+                ))}
 
-              <Divider sx={{ my: 1 }} />
-              <Stack direction="row" spacing={0.6}>
-                <TextField
-                  size="small"
-                  fullWidth
-                  value={replyDrafts[comment.id] ?? ""}
-                  onChange={(event) => setReplyDrafts((current) => ({ ...current, [comment.id]: event.target.value }))}
-                  placeholder="回复..."
-                />
-                <IconButton
-                  size="small"
-                  color="primary"
-                  disabled={!(replyDrafts[comment.id] ?? "").trim()}
-                  onClick={() => {
-                    addReply(comment.id, replyDrafts[comment.id] ?? "");
-                    setReplyDrafts((current) => ({ ...current, [comment.id]: "" }));
-                  }}
-                >
-                  <ReplyRounded fontSize="small" />
-                </IconButton>
-              </Stack>
-            </Paper>
-          ))}
+                <Divider sx={{ my: 1 }} />
+                <Stack direction="row" spacing={0.6}>
+                  <TextField
+                    size="small"
+                    fullWidth
+                    value={replyDrafts[comment.id] ?? ""}
+                    onChange={(event) => setReplyDrafts((current) => ({ ...current, [comment.id]: event.target.value }))}
+                    placeholder="回复..."
+                  />
+                  <IconButton
+                    size="small"
+                    color="primary"
+                    disabled={!(replyDrafts[comment.id] ?? "").trim()}
+                    onClick={() => {
+                      addReply(comment.id, replyDrafts[comment.id] ?? "");
+                      setReplyDrafts((current) => ({ ...current, [comment.id]: "" }));
+                    }}
+                  >
+                    <ReplyRounded fontSize="small" />
+                  </IconButton>
+                </Stack>
+              </Paper>
+            );
+          })}
         </Stack>
       </Box>
     </Paper>

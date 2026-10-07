@@ -73,7 +73,7 @@ const DiffEditorPane = forwardRef<DiffEditorHandle, DiffEditorPaneProps>(functio
     decorationCollectionsRef.current = [];
 
     const originalDecorations = comments
-      .filter((comment) => comment.side === "original")
+      .filter((comment) => comment.side === "original" && !comment.orphaned)
       .map((comment) => ({
         range: new monaco.Range(comment.line, 1, comment.line, 1),
         options: {
@@ -83,7 +83,7 @@ const DiffEditorPane = forwardRef<DiffEditorHandle, DiffEditorPaneProps>(functio
         },
       }));
     const modifiedDecorations = comments
-      .filter((comment) => comment.side === "modified")
+      .filter((comment) => comment.side === "modified" && !comment.orphaned)
       .map((comment) => ({
         range: new monaco.Range(comment.line, 1, comment.line, 1),
         options: {

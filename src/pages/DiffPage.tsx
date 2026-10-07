@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  Alert,
   Box,
   Button,
   Chip,
@@ -15,11 +16,14 @@ import {
 } from "@mui/material";
 import {
   AddCommentRounded,
+  CallSplitRounded,
   CheckCircleRounded,
   CompareArrowsRounded,
   DensityMediumRounded,
   KeyboardArrowDownRounded,
   KeyboardArrowUpRounded,
+  LockOpenRounded,
+  LockPersonRounded,
   SplitscreenRounded,
   UnfoldLessRounded,
   ViewAgendaRounded,
@@ -27,26 +31,41 @@ import {
 import CommentPanel from "../components/CommentPanel";
 import DiffEditorPane, { type DiffEditorHandle } from "../components/DiffEditorPane";
 import FileTree from "../components/FileTree";
-import { commentsForFile, useReviewStore } from "../stores/reviewStore";
+import { commentsForFile, openConflictsOf, useReviewStore, useViewDoc } from "../stores/reviewStore";
+import { isClaimActive, isClaimFree } from "../sync/merge";
 import type { CommentSide } from "../types/review";
 
 export default function DiffPage() {
-  const files = useReviewStore((state) => state.files);
+  const doc = useViewDoc();
+  const files = doc.files;
   const selectedFileId = useReviewStore((state) => state.selectedFileId);
   const viewMode = useReviewStore((state) => state.viewMode);
   const hideUnchanged = useReviewStore((state) => state.hideUnchanged);
-  const reviewedFiles = useReviewStore((state) => state.reviewedFiles);
-  const comments = useReviewStore((state) => state.comments);
   const draft = useReviewStore((state) => state.draft);
+  const sessionId = useReviewStore((state) => state.sessionId);
+  const nowTick = useReviewStore((state) => state.nowTick);
   const setViewMode = useReviewStore((state) => state.setViewMode);
   const setHideUnchanged = useReviewStore((state) => state.setHideUnchanged);
   const setDraft = useReviewStore((state) => state.setDraft);
   const toggleReviewed = useReviewStore((state) => state.toggleReviewed);
+  const claimFile = useReviewStore((state) => state.claimFile);
+  const releaseClaim = useReviewStore((state) => state.releaseClaim);
+  const takeoverClaim = useReviewStore((state) => state.takeoverClaim);
   const editorRef = useRef<DiffEditorHandle | null>(null);
   const [lastJump, setLastJump] = useState<number | null>(null);
-  const selectedFile = files.find((file) => file.id === selectedFileId)!;
-  const fileComments = useMemo(() => commentsForFile(comments, selectedFileId), [comments, selectedFileId]);
-  const reviewed = reviewedFiles.includes(selectedFileId);
+  const selectedFile = files.find((file) => file.id === selectedFileId) ?? files[0];
+  const fileComments = useMemo(
+    () => (selectedFile ? commentsForFile(doc.comments, selectedFile.id) : []),
+    [doc.comments, selectedFile],
+  );
+  const signoff = selectedFile ? doc.signoffs[selectedFile.id] : undefined;
+  const conflicts = selectedFile ? openConflictsOf(doc, selectedFile.id) : [];
+  const blocked = conflicts.length > 0;
+  const claim = selectedFile ? doc.claims[selectedFile.id] : undefined;
+  const claimActive = isClaimActive(claim, nowTick);
+  const claimMine = claimActive && claim.holderId === sessionId;
+  const claimFree = isClaimFree(claim, nowTick);
+  const claimSecondsLeft = claimActive ? Math.max(0, Math.round((Date.parse(claim.expiresAt) - nowTick) / 1000)) : 0;
 
   const reveal = (side: CommentSide, line: number) => {
     editorRef.current?.revealLine(line, side);
@@ -54,8 +73,9 @@ export default function DiffPage() {
   };
 
   const createCurrentComment = () => {
+    if (!selectedFile) return;
     editorRef.current?.getModifiedLine();
-    setDraft({ fileId: selectedFileId, line: editorRef.current?.getModifiedLine() ?? 1, side: "modified" });
+    setDraft({ fileId: selectedFile.id, line: editorRef.current?.getModifiedLine() ?? 1, side: "modified" });
   };
 
   const moveNext = () => {
@@ -92,6 +112,8 @@ export default function DiffPage() {
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [selectedFileId, toggleReviewed]);
+
+  if (!selectedFile) return null;
 
   return (
     <Box sx={{ px: { xs: 1.2, xl: 2 }, py: 1.6, maxWidth: 1920, mx: "auto" }}>
@@ -134,19 +156,52 @@ export default function DiffPage() {
         </Tooltip>
         <Divider orientation="vertical" flexItem />
         <Button size="small" startIcon={<AddCommentRounded />} onClick={createCurrentComment}>评论当前行</Button>
+        <Divider orientation="vertical" flexItem />
+        {claimMine ? (
+          <Tooltip title="交回租约，其他标签页即可接手该文件">
+            <Button size="small" color="info" variant="outlined" startIcon={<LockOpenRounded />} onClick={() => releaseClaim(selectedFile.id)}>
+              交回（剩 {claimSecondsLeft}s）
+            </Button>
+          </Tooltip>
+        ) : claimActive ? (
+          <Tooltip title={`${claim.holderName} 持有中，剩余 ${claimSecondsLeft}s；超时或对方交回后可接手`}>
+            <span>
+              <Button size="small" color="warning" variant="outlined" startIcon={<LockPersonRounded />} disabled>
+                {claim.holderName} 持有 · {claimSecondsLeft}s
+              </Button>
+            </span>
+          </Tooltip>
+        ) : (
+          <Tooltip title="认领后 45 秒内其他标签页对该文件的提交会等待">
+            <Button size="small" variant="outlined" startIcon={<LockPersonRounded />} onClick={() => (claimFree && claim ? takeoverClaim(selectedFile.id) : claimFile(selectedFile.id))}>
+              {claim ? "接手该文件" : "认领该文件"}
+            </Button>
+          </Tooltip>
+        )}
         <Box sx={{ flex: 1 }} />
         {lastJump && <Chip size="small" icon={<CompareArrowsRounded />} label={`已跳到新行 ${lastJump}`} />}
         <Chip size="small" icon={<DensityMediumRounded />} label={`${selectedFile.additions} 增 / ${selectedFile.deletions} 删`} color="primary" variant="outlined" />
-        <Button
-          size="small"
-          variant={reviewed ? "contained" : "outlined"}
-          color={reviewed ? "success" : "primary"}
-          startIcon={<CheckCircleRounded />}
-          onClick={() => toggleReviewed()}
-        >
-          {reviewed ? "已查看" : "标记已查看"}
-        </Button>
+        <Tooltip title={blocked ? "存在未裁决冲突，裁决后才能完成签收" : signoff ? `取消签收（${signoff.signedBy}）` : "签收该文件"}>
+          <span>
+            <Button
+              size="small"
+              variant={signoff ? "contained" : "outlined"}
+              color={signoff ? "success" : blocked ? "warning" : "primary"}
+              startIcon={blocked ? <CallSplitRounded /> : <CheckCircleRounded />}
+              disabled={blocked}
+              onClick={() => toggleReviewed()}
+            >
+              {blocked ? "冲突待裁决" : signoff ? "已签收" : "签收文件"}
+            </Button>
+          </span>
+        </Tooltip>
       </Paper>
+
+      {blocked && (
+        <Alert severity="warning" sx={{ mb: 1.2, py: 0.2, "& .MuiAlert-message": { fontSize: 11.5 } }}>
+          该文件有 {conflicts.length} 个合并冲突：两边都改过同一实体，已各留一份。请在顶部「冲突」面板完成裁决，裁决前不能签收本文件。
+        </Alert>
+      )}
 
       <Box
         sx={{
@@ -204,11 +259,11 @@ export default function DiffPage() {
       <Paper variant="outlined" sx={{ mt: 1.2, px: 1.5, py: 1, display: "flex", alignItems: "center", gap: 1.2, flexWrap: "wrap" }}>
         <UnfoldLessRounded fontSize="small" color="action" />
         <Typography sx={{ fontSize: 10.5, color: "text.secondary" }}>
-          大 Diff 仅调度可见行；切换文件会保留本地评论、已查看状态和审查视图设置。
+          大 Diff 仅调度可见行；签收与评论按批次合并到共享文档，变更集更新会让签收失效并重算评论定位。
         </Typography>
         <Box sx={{ flex: 1 }} />
         <Typography sx={{ fontSize: 10.5, color: "text.secondary" }}>
-          快捷键：F7 下一处 · Shift+F7 上一处 · Alt+C 评论 · Alt+R 已查看
+          快捷键：F7 下一处 · Shift+F7 上一处 · Alt+C 评论 · Alt+R 签收
         </Typography>
       </Paper>
     </Box>
