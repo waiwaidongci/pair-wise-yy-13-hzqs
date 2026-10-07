@@ -27,7 +27,11 @@ import {
 import CommentPanel from "../components/CommentPanel";
 import DiffEditorPane, { type DiffEditorHandle } from "../components/DiffEditorPane";
 import FileTree from "../components/FileTree";
+import BatchBar from "../components/BatchBar";
+import ConflictPanel from "../components/ConflictPanel";
+import SignoffBadge from "../components/SignoffBadge";
 import { commentsForFile, useReviewStore } from "../stores/reviewStore";
+import { isConflicted, isSigned } from "../utils/batch";
 import type { CommentSide } from "../types/review";
 
 export default function DiffPage() {
@@ -37,16 +41,21 @@ export default function DiffPage() {
   const hideUnchanged = useReviewStore((state) => state.hideUnchanged);
   const reviewedFiles = useReviewStore((state) => state.reviewedFiles);
   const comments = useReviewStore((state) => state.comments);
+  const signoffs = useReviewStore((state) => state.signoffs);
   const draft = useReviewStore((state) => state.draft);
   const setViewMode = useReviewStore((state) => state.setViewMode);
   const setHideUnchanged = useReviewStore((state) => state.setHideUnchanged);
   const setDraft = useReviewStore((state) => state.setDraft);
   const toggleReviewed = useReviewStore((state) => state.toggleReviewed);
+  const signFile = useReviewStore((state) => state.signFile);
   const editorRef = useRef<DiffEditorHandle | null>(null);
   const [lastJump, setLastJump] = useState<number | null>(null);
   const selectedFile = files.find((file) => file.id === selectedFileId)!;
   const fileComments = useMemo(() => commentsForFile(comments, selectedFileId), [comments, selectedFileId]);
   const reviewed = reviewedFiles.includes(selectedFileId);
+  const signoff = signoffs[selectedFileId];
+  const conflicted = signoff ? isConflicted(signoff) : false;
+  const signed = signoff ? isSigned(signoff) : false;
 
   const reveal = (side: CommentSide, line: number) => {
     editorRef.current?.revealLine(line, side);
@@ -95,6 +104,8 @@ export default function DiffPage() {
 
   return (
     <Box sx={{ px: { xs: 1.2, xl: 2 }, py: 1.6, maxWidth: 1920, mx: "auto" }}>
+      <BatchBar />
+      <ConflictPanel />
       <Paper
         variant="outlined"
         sx={{
@@ -137,15 +148,21 @@ export default function DiffPage() {
         <Box sx={{ flex: 1 }} />
         {lastJump && <Chip size="small" icon={<CompareArrowsRounded />} label={`已跳到新行 ${lastJump}`} />}
         <Chip size="small" icon={<DensityMediumRounded />} label={`${selectedFile.additions} 增 / ${selectedFile.deletions} 删`} color="primary" variant="outlined" />
-        <Button
-          size="small"
-          variant={reviewed ? "contained" : "outlined"}
-          color={reviewed ? "success" : "primary"}
-          startIcon={<CheckCircleRounded />}
-          onClick={() => toggleReviewed()}
-        >
-          {reviewed ? "已查看" : "标记已查看"}
-        </Button>
+        <SignoffBadge progress={signoff} />
+        <Tooltip title={conflicted ? "文件存在冲突，裁决后才能完成" : signed ? "交回签收" : "签收此文件"}>
+          <span>
+            <Button
+              size="small"
+              variant={signed ? "contained" : "outlined"}
+              color={signed ? "success" : "primary"}
+              startIcon={<CheckCircleRounded />}
+              onClick={() => (signed ? toggleReviewed() : signFile())}
+              disabled={conflicted || (!signed && signoff?.signoffStatus !== "claimed")}
+            >
+              {signed ? "已签收" : "签收"}
+            </Button>
+          </span>
+        </Tooltip>
       </Paper>
 
       <Box

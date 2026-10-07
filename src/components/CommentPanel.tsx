@@ -22,6 +22,7 @@ import {
 } from "@mui/icons-material";
 import type { CommentDraft, CommentSide } from "../types/review";
 import { commentSideLabel, commentsForFile, useReviewStore } from "../stores/reviewStore";
+import { isConflicted } from "../utils/batch";
 
 export default function CommentPanel({
   draft,
@@ -37,6 +38,7 @@ export default function CommentPanel({
   const selectedFileId = useReviewStore((state) => state.selectedFileId);
   const files = useReviewStore((state) => state.files);
   const comments = useReviewStore((state) => state.comments);
+  const signoffs = useReviewStore((state) => state.signoffs);
   const addComment = useReviewStore((state) => state.addComment);
   const addReply = useReviewStore((state) => state.addReply);
   const resolveComment = useReviewStore((state) => state.resolveComment);
@@ -46,9 +48,10 @@ export default function CommentPanel({
   const selectedFile = files.find((file) => file.id === selectedFileId)!;
   const currentComments = commentsForFile(comments, selectedFileId);
   const unresolved = currentComments.filter((comment) => !comment.resolved).length;
+  const conflicted = signoffs[selectedFileId] ? isConflicted(signoffs[selectedFileId]) : false;
 
   const submitDraft = () => {
-    if (!draft || !draftBody.trim()) return;
+    if (!draft || !draftBody.trim() || conflicted) return;
     addComment(draft, draftBody);
     setDraftBody("");
   };
@@ -69,7 +72,15 @@ export default function CommentPanel({
         </Button>
       </Box>
 
-      {draft && (
+      {conflicted && (
+        <Box sx={{ px: 1.3, py: 0.8, bgcolor: "warning.50", borderBottom: "1px solid", borderColor: "warning.main" }}>
+          <Typography sx={{ fontSize: 10.5, color: "warning.dark", fontWeight: 750 }}>
+            此文件存在冲突，评论已锁定。请在上方裁决后再继续。
+          </Typography>
+        </Box>
+      )}
+
+      {draft && !conflicted && (
         <Box sx={{ p: 1.3, bgcolor: "primary.50", borderBottom: "1px solid", borderColor: "divider" }}>
           <Stack direction="row" alignItems="center" sx={{ mb: 0.8 }}>
             <Typography sx={{ fontSize: 11.5, fontWeight: 900, flex: 1 }}>
@@ -120,15 +131,19 @@ export default function CommentPanel({
                   sx={{ cursor: "pointer", fontFamily: "monospace" }}
                 />
                 <Typography sx={{ fontSize: 10.5, fontWeight: 850, flex: 1 }}>{comment.author}</Typography>
-                <Tooltip title={comment.resolved ? "重新打开" : "标记已解决"}>
-                  <IconButton size="small" color={comment.resolved ? "primary" : "success"} onClick={() => resolveComment(comment.id, !comment.resolved)}>
-                    {comment.resolved ? <ReplayRounded fontSize="small" /> : <CheckCircleRounded fontSize="small" />}
-                  </IconButton>
+                <Tooltip title={conflicted ? "文件冲突中，无法操作" : comment.resolved ? "重新打开" : "标记已解决"}>
+                  <span>
+                    <IconButton size="small" color={comment.resolved ? "primary" : "success"} disabled={conflicted} onClick={() => resolveComment(comment.id, !comment.resolved)}>
+                      {comment.resolved ? <ReplayRounded fontSize="small" /> : <CheckCircleRounded fontSize="small" />}
+                    </IconButton>
+                  </span>
                 </Tooltip>
-                <Tooltip title="删除评论">
-                  <IconButton size="small" color="error" onClick={() => deleteComment(comment.id)}>
-                    <DeleteOutlineRounded fontSize="small" />
-                  </IconButton>
+                <Tooltip title={conflicted ? "文件冲突中，无法操作" : "删除评论"}>
+                  <span>
+                    <IconButton size="small" color="error" disabled={conflicted} onClick={() => deleteComment(comment.id)}>
+                      <DeleteOutlineRounded fontSize="small" />
+                    </IconButton>
+                  </span>
                 </Tooltip>
               </Stack>
               <Typography sx={{ mt: 0.8, fontSize: 11.2, lineHeight: 1.6 }}>{comment.body}</Typography>
@@ -156,12 +171,13 @@ export default function CommentPanel({
                   fullWidth
                   value={replyDrafts[comment.id] ?? ""}
                   onChange={(event) => setReplyDrafts((current) => ({ ...current, [comment.id]: event.target.value }))}
-                  placeholder="回复..."
+                  placeholder={conflicted ? "文件冲突中" : "回复..."}
+                  disabled={conflicted}
                 />
                 <IconButton
                   size="small"
                   color="primary"
-                  disabled={!(replyDrafts[comment.id] ?? "").trim()}
+                  disabled={conflicted || !(replyDrafts[comment.id] ?? "").trim()}
                   onClick={() => {
                     addReply(comment.id, replyDrafts[comment.id] ?? "");
                     setReplyDrafts((current) => ({ ...current, [comment.id]: "" }));

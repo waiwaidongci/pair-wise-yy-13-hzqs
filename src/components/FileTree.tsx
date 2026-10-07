@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import {
   Box,
+  Button,
   Checkbox,
   Chip,
   Divider,
@@ -25,6 +26,8 @@ import {
 } from "@mui/icons-material";
 import { useReviewStore } from "../stores/reviewStore";
 import type { DiffFile, DiffFileStatus } from "../types/review";
+import SignoffBadge from "./SignoffBadge";
+import { isClaimable, isClaimExpired, isConflicted, isSigned } from "../utils/batch";
 
 function statusIcon(status: DiffFileStatus) {
   if (status === "added") return <AddRounded fontSize="small" />;
@@ -45,8 +48,14 @@ export default function FileTree() {
   const selectedFileId = useReviewStore((state) => state.selectedFileId);
   const reviewedFiles = useReviewStore((state) => state.reviewedFiles);
   const comments = useReviewStore((state) => state.comments);
+  const signoffs = useReviewStore((state) => state.signoffs);
+  const currentBatchId = useReviewStore((state) => state.currentBatchId);
   const setSelectedFile = useReviewStore((state) => state.setSelectedFile);
   const toggleReviewed = useReviewStore((state) => state.toggleReviewed);
+  const claimFile = useReviewStore((state) => state.claimFile);
+  const signFile = useReviewStore((state) => state.signFile);
+  const handbackFile = useReviewStore((state) => state.handbackFile);
+  const takeoverFile = useReviewStore((state) => state.takeoverFile);
   const [query, setQuery] = useState("");
   const filtered = useMemo(
     () => files.filter((file) => `${file.path}${file.description}`.toLowerCase().includes(query.trim().toLowerCase())),
@@ -81,6 +90,12 @@ export default function FileTree() {
           const reviewed = reviewedFiles.includes(file.id);
           const fileComments = comments.filter((comment) => comment.fileId === file.id);
           const unresolved = fileComments.filter((comment) => !comment.resolved).length;
+          const signoff = signoffs[file.id];
+          const conflicted = signoff ? isConflicted(signoff) : false;
+          const signed = signoff ? isSigned(signoff) : false;
+          const claimable = signoff ? isClaimable(signoff) : true;
+          const claimExpired = signoff ? isClaimExpired(signoff) : false;
+          const myClaim = signoff?.holder === "林澈" && signoff.signoffStatus === "claimed";
           return (
             <ListItemButton
               key={file.id}
@@ -92,8 +107,8 @@ export default function FileTree() {
                 borderRadius: 1.1,
                 mb: 0.45,
                 border: "1px solid",
-                borderColor: selected ? "primary.main" : "transparent",
-                bgcolor: selected ? "primary.50" : undefined,
+                borderColor: selected ? "primary.main" : conflicted ? "warning.main" : "transparent",
+                bgcolor: selected ? "primary.50" : conflicted ? "warning.50" : undefined,
               }}
             >
               <Tooltip title={reviewed ? "标记为未查看" : "标记为已查看"}>
@@ -102,6 +117,7 @@ export default function FileTree() {
                   checked={reviewed}
                   onClick={(event) => event.stopPropagation()}
                   onChange={() => toggleReviewed(file.id)}
+                  disabled={conflicted}
                   icon={<Box sx={{ width: 17, height: 17, border: "1.5px solid", borderColor: "grey.400", borderRadius: 0.5 }} />}
                   checkedIcon={<CheckCircleRounded color="success" />}
                   sx={{ mt: -0.4, ml: -0.35 }}
@@ -116,14 +132,39 @@ export default function FileTree() {
                   <Typography noWrap sx={{ mt: 0.35, fontSize: 9.5, color: "text.secondary" }}>原路径：{file.oldPath}</Typography>
                 )}
                 <Typography noWrap sx={{ mt: 0.45, fontSize: 9.8, color: "text.secondary" }}>{file.description}</Typography>
-                <Stack direction="row" spacing={0.7} alignItems="center" sx={{ mt: 0.7 }}>
+                <Stack direction="row" spacing={0.7} alignItems="center" sx={{ mt: 0.7, flexWrap: "wrap", gap: 0.4 }}>
                   <Typography sx={{ fontSize: 9.5, color: "success.main", fontFamily: "monospace", fontWeight: 850 }}>+{file.additions}</Typography>
                   <Typography sx={{ fontSize: 9.5, color: "error.main", fontFamily: "monospace", fontWeight: 850 }}>-{file.deletions}</Typography>
                   {fileComments.length > 0 && (
                     <Chip size="small" label={`${fileComments.length} 评论${unresolved ? ` / ${unresolved} 未解决` : ""}`} color={unresolved ? "warning" : "success"} sx={{ height: 18, fontSize: 9 }} />
                   )}
+                  <SignoffBadge progress={signoff} />
                   {reviewed && <Chip size="small" color="success" label="已查看" sx={{ height: 18, fontSize: 9 }} />}
                 </Stack>
+                {currentBatchId && !signed && !conflicted && (
+                  <Stack direction="row" spacing={0.5} sx={{ mt: 0.6 }} onClick={(event) => event.stopPropagation()}>
+                    {claimable && (
+                      <Button size="small" variant="outlined" sx={{ fontSize: 9, py: 0, minHeight: 20 }} onClick={() => claimFile(file.id)}>
+                        认领
+                      </Button>
+                    )}
+                    {myClaim && (
+                      <>
+                        <Button size="small" variant="contained" sx={{ fontSize: 9, py: 0, minHeight: 20 }} onClick={() => signoff && signFile(file.id)}>
+                          签收
+                        </Button>
+                        <Button size="small" variant="text" sx={{ fontSize: 9, py: 0, minHeight: 20 }} onClick={() => handbackFile(file.id)}>
+                          交回
+                        </Button>
+                      </>
+                    )}
+                    {claimExpired && (
+                      <Button size="small" variant="outlined" color="warning" sx={{ fontSize: 9, py: 0, minHeight: 20 }} onClick={() => takeoverFile(file.id)}>
+                        接手
+                      </Button>
+                    )}
+                  </Stack>
+                )}
               </Box>
             </ListItemButton>
           );
@@ -132,7 +173,7 @@ export default function FileTree() {
       <Divider />
       <Box sx={{ p: 1.1 }}>
         <Typography sx={{ fontSize: 10, color: "text.secondary", lineHeight: 1.55 }}>
-          Monaco 仅渲染视口附近行；数千行 Diff 仍可连续滚动。
+          签收先到者领走，超时或交回后他人可接手；冲突需裁决后才能完成。
         </Typography>
       </Box>
     </Paper>

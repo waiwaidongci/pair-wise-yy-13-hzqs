@@ -16,22 +16,26 @@ import {
   DoneAllRounded,
   ForkRightRounded,
   KeyboardRounded,
+  PersonRounded,
   RateReviewRounded,
   VisibilityRounded,
 } from "@mui/icons-material";
 import { Outlet } from "react-router-dom";
 import { useReviewSummary } from "../queries/review";
-import { useReviewStore } from "../stores/reviewStore";
+import { useReviewStore, batchHolderLabel } from "../stores/reviewStore";
 
 export default function AppShell() {
   const { data, isLoading } = useReviewSummary();
   const files = useReviewStore((state) => state.files);
   const reviewedFiles = useReviewStore((state) => state.reviewedFiles);
   const comments = useReviewStore((state) => state.comments);
+  const batches = useReviewStore((state) => state.snapshot.batches);
+  const currentBatchId = useReviewStore((state) => state.currentBatchId);
   const additions = files.reduce((sum, file) => sum + file.additions, 0);
   const deletions = files.reduce((sum, file) => sum + file.deletions, 0);
   const unresolved = comments.filter((comment) => !comment.resolved).length;
   const progress = Math.round((reviewedFiles.length / files.length) * 100);
+  const batch = batches.find((b) => b.id === currentBatchId);
 
   return (
     <Box sx={{ minHeight: "100vh", bgcolor: "background.default" }}>
@@ -51,6 +55,9 @@ export default function AppShell() {
             <Chip size="small" icon={<ForkRightRounded />} label={data?.branch ?? "feature"} variant="outlined" />
             <Chip size="small" icon={<CommitRounded />} label={`${additions} 增 / ${deletions} 删`} />
             <Chip size="small" icon={<RateReviewRounded />} color={unresolved ? "warning" : "success"} label={`${unresolved} 条未解决`} />
+            {batch && (
+              <Chip size="small" icon={<PersonRounded />} label={batchHolderLabel(batch)} color="info" variant="outlined" />
+            )}
           </Stack>
           <Box sx={{ flex: 1 }} />
           <Tooltip title="F7 或 Alt+↓ 跳到下一处修改；Alt+↑ 返回上一处">
